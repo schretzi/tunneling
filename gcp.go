@@ -18,7 +18,7 @@ func startIAP(ctx context.Context, t *Tunnel) {
 		log.Fatal(err)
 	}
 
-	log.Info(t.Name + ": GCP IAP Listening on " + t.LocalPort)
+	log.Info(t.Name + ": GCP IAP Listening on " + t.LocalPort + " for " + t.RemoteHost + ":" + t.RemotePort)
 	t.status = "Listening"
 
 	for {
@@ -50,16 +50,16 @@ func startGcp(ctx context.Context, conn net.Conn, t *Tunnel) {
 		log.Fatal(err)
 	}
 
-	log.Info(t.Name + ": Connected to " + t.Name + " on " + t.RemotePort)
+	log.Info(t.Name + ": Connected to " + t.Name + " on " + t.RemotePort + " via " + t.LocalPort)
 
 	go func() {
 		if _, err := io.Copy(conn, t.conn); err != nil {
-			log.Debug(err)
+			log.Error(err)
 		}
 	}()
 
 	if _, err := io.Copy(t.conn, conn); err != nil {
-		log.Debug(err)
+		log.Error(err)
 	}
 	log.Info(t.Name + ": Disconnected")
 }

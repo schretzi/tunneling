@@ -70,15 +70,15 @@ build: windows linux darwin
     # Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
 	
 windows:
-	env GOOS=windows GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_windows_amd64 ${MAIN_PACKAGE_PATH}
+	env GOOS=windows GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_windows_amd64 ${MAIN_PACKAGE_PATH}
 
 linux:
-	env GOOS=linux GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_linux_amd64 ${MAIN_PACKAGE_PATH}
-	env GOOS=linux GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_linux_arm64 ${MAIN_PACKAGE_PATH}
+	env GOOS=linux GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_linux_amd64 ${MAIN_PACKAGE_PATH}
+	env GOOS=linux GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_linux_arm64 ${MAIN_PACKAGE_PATH}
 
 darwin:
-	env GOOS=darwin GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_darwin_arm64 ${MAIN_PACKAGE_PATH}
+	env GOOS=darwin GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_darwin_arm64 ${MAIN_PACKAGE_PATH}
 
 .PHONY: install
 install:
-	cp ${BUILD_PATH}/${BINARY_NAME}_${ACTUAL_OS}_${ACTUAL_ARCH} ~/bin/${BINARY_NAME}
+	cp ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_${ACTUAL_OS}_${ACTUAL_ARCH} ~/bin/${BINARY_NAME}

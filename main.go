@@ -3,11 +3,16 @@ package main
 import (
 	"context"
 	"sync"
-
+	"os"
+	"net"
+	"fmt"
+	
 	"github.com/cedws/iapc/iap"
 	"github.com/spf13/viper"
 
 	"github.com/charmbracelet/log"
+
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type Tunnel struct {
@@ -30,6 +35,15 @@ type Tunnel struct {
 var tunnels map[string]Tunnel
 
 func main() {
+	identities, err := GetSSHAgentIdentities()
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+
+	if len(identities) == 0 {
+		log.Fatal("SSH agent is running but holds no identities (keys).")
+	}
+
 	ctx := context.Background()
 
 	tunnels = make(map[string]Tunnel)
@@ -70,3 +84,27 @@ func startTunnels(ctx context.Context, wg *sync.WaitGroup) {
 		}
 	}
 }
+
+func GetSSHAgentIdentities() ([]*agent.Key, error) {
+	socketPath := os.Getenv("SSH_AUTH_SOCK")
+	if socketPath == "" {
+		return nil, fmt.Errorf("SSH_AUTH_SOCK environment variable not set, ssh-agent may not be running")
+	}
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to ssh-agent socket: %w", err)
+	}
+	defer conn.Close()
+
+	agentClient := agent.NewClient(conn)
+
+	identities, err := agentClient.List()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list identities from ssh-agent: %w", err)
+	}
+
+	return identities, nil
+}
+
+

@@ -32,6 +32,6 @@ func startSSH(t *Tunnel) {
 	// ssh.Log = log.New(os.Stdout)
 
 	go ssh.Start()
-	log.Info(t.Name + ": SSH Connected on " + t.LocalPort)
+	log.Info(t.Name + ": SSH Connected on " + t.TunnelHost + ":" + t.LocalPort + " to " + t.RemoteHost + ":" + t.RemotePort + " over " + t.TunnelHost + ":" + t.TunnelPort)
 	time.Sleep(100 * time.Millisecond)
 }
