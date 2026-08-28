@@ -1,0 +1,34 @@
+name: Release
+
+# Manual only: pushing a tag does NOT publish a release by itself. To cut a
+# release: `git tag vX.Y.Z && git push origin vX.Y.Z`, then run this
+# workflow from the Actions tab with that tag selected as the ref.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Write access to schretzi/homebrew-tap, which GITHUB_TOKEN does
+          # not cover. Required by the homebrew_casks block in
+          # .goreleaser.yaml.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

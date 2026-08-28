@@ -1,84 +1,148 @@
-#!/bin/bash
+.PHONY: help fmt fmt-check vet lint lint-fix sec vuln security modcheck test build install docs docs-check release-check pipeline ci hooks tools clean
 
-BINARY_NAME=tunneling
-MAIN_PACKAGE_PATH=.
-PACKAGE=github.com/schretzi/tunneling
+GO      ?= go
+BIN     ?= tunneling
+PKG     ?= .
 
-VERSION=$(shell git describe --tags --always --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2> /dev/null)
-COMMIT_HASH=$(shell git rev-parse --short HEAD)
-BUILD_TIMESTAMP=$(shell date '+%Y-%m-%dT%H:%M:%S')
-BUILD_PATH=$(MAIN_PACKAGE_PATH)/builds
+# Where `make install` puts the binary. On PATH, and stable across rebuilds,
+# which is what the LaunchAgent plist needs.
+INSTALL_DIR ?= $(HOME)/bin
 
-LDFLAGS=-ldflags "-X ${PACKAGE}/tunneling.Version=${VERSION} -X ${PACKAGE}/tunneling.CommitHash=${COMMIT_HASH} -X ${PACKAGE}/tunneling.BuildTimestamp=${BUILD_TIMESTAMP}"
+# Keep these in sync with .github/workflows/ci.yml so "passes locally, fails
+# in CI" (and vice versa) cannot happen.
+GOLANGCI_VERSION ?= v2.13.1
+GOSEC_VERSION    ?= v2.28.0
 
-ACTUAL_OS=$(shell uname -o |  tr '[:upper:]' '[:lower:]' )
-ACTUAL_ARCH=$(shell uname -m)
+help: ## Show this help.
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
+# ---- formatting ------------------------------------------------------------
 
-# ==================================================================================== #
-# HELPERS
-# ==================================================================================== #
+fmt: ## Reformat all Go source files in place (gofumpt + goimports).
+	golangci-lint fmt ./...
 
-## help: print this help message
-.PHONY: help
-help:
-	@echo 'Usage:'
-	@sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
+fmt-check: ## Fail if any Go file is not formatted.
+	@golangci-lint fmt --diff ./... || { \
+		echo ""; \
+		echo "Some files are not formatted. Run 'make fmt' and commit the result."; \
+		exit 1; \
+	}
 
-.PHONY: confirm
-confirm:
-	@echo -n 'Are you sure? [y/N] ' && read ans && [ $${ans:-N} = y ]
+# ---- static analysis -------------------------------------------------------
 
-.PHONY: no-dirty
-no-dirty:
-	git diff --exit-code
+vet: ## Run go vet.
+	$(GO) vet ./...
 
-# ==================================================================================== #
-# TEST & BUILD
-# ==================================================================================== #
+lint: ## Run golangci-lint (see .golangci.yml for the enabled linters).
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found. Install: make tools"; \
+		exit 1; \
+	}
+	golangci-lint run ./...
 
-## tidy: format code and tidy modfile
-.PHONY: tidy
-tidy:
-	go fmt ./...
-	go mod tidy -v
+lint-fix: ## Run golangci-lint and auto-fix what it can.
+	golangci-lint run --fix ./...
 
-## audit: run quality control checks
-.PHONY: audit
-audit:
-	go mod verify
-	go vet ./...
-	go run honnef.co/go/tools/cmd/staticcheck@latest -checks=all,-ST1000,-U1000 ./...
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-	go test -race -buildvcs -vet=off ./...
+# ---- security --------------------------------------------------------------
 
+sec: ## Run gosec (code-level security static analysis).
+	@command -v gosec >/dev/null 2>&1 || { \
+		echo "gosec not found. Install: make tools"; \
+		exit 1; \
+	}
+	gosec -quiet ./...
 
-## test: run all tests
-.PHONY: test
-test:
-	go test -v -race -buildvcs ./...
+vuln: ## Run govulncheck (known CVEs reachable from this code).
+	@command -v govulncheck >/dev/null 2>&1 || { \
+		echo "govulncheck not found. Install: make tools"; \
+		exit 1; \
+	}
+	govulncheck ./...
 
-## test/cover: run all tests and display coverage
-.PHONY: test/cover
-test/cover:
-	go test -v -race -buildvcs -coverprofile=/tmp/coverage.out ./...
-	go tool cover -html=/tmp/coverage.out
+security: sec vuln ## Both security checks: gosec (code) + govulncheck (dependencies).
 
-## build: build the application
-.PHONY: build
-build: windows linux darwin
-    # Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
-	
-windows:
-	env GOOS=windows GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_windows_amd64 ${MAIN_PACKAGE_PATH}
+# ---- dependencies ----------------------------------------------------------
 
-linux:
-	env GOOS=linux GOARCH=amd64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_linux_amd64 ${MAIN_PACKAGE_PATH}
-	env GOOS=linux GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_linux_arm64 ${MAIN_PACKAGE_PATH}
+modcheck: ## Verify module checksums, and fail if go.mod/go.sum are not tidy.
+	$(GO) mod verify
+	@tmp=$$(mktemp -d); \
+	cp go.mod "$$tmp/go.mod.orig"; \
+	[ -f go.sum ] && cp go.sum "$$tmp/go.sum.orig" || true; \
+	$(GO) mod tidy; \
+	status=0; \
+	diff -u "$$tmp/go.mod.orig" go.mod || status=1; \
+	if [ -f "$$tmp/go.sum.orig" ]; then diff -u "$$tmp/go.sum.orig" go.sum || status=1; fi; \
+	mv "$$tmp/go.mod.orig" go.mod; \
+	if [ -f "$$tmp/go.sum.orig" ]; then mv "$$tmp/go.sum.orig" go.sum; else rm -f go.sum; fi; \
+	rm -rf "$$tmp"; \
+	if [ $$status -ne 0 ]; then \
+		echo "go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result."; \
+		exit 1; \
+	fi
 
-darwin:
-	env GOOS=darwin GOARCH=arm64 go build -v -o ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_darwin_arm64 ${MAIN_PACKAGE_PATH}
+# ---- tests / build ---------------------------------------------------------
 
-.PHONY: install
-install:
-	cp ${BUILD_PATH}/${BINARY_NAME}_${VERSION}_${ACTUAL_OS}_${ACTUAL_ARCH} ~/bin/${BINARY_NAME}
+test: ## Run the test suite with the race detector and coverage.
+	$(GO) test ./... -race -cover
+
+build: ## Build the tunneling binary.
+	$(GO) build -o $(BIN) $(PKG)
+
+# Until the Homebrew cask exists, this is how the binary gets somewhere the
+# LaunchAgent plist can point at. Not the Caskroom-versioned path a cask would
+# use - see `service install` on why that path must stay stable.
+install: build ## Install the binary to $(INSTALL_DIR).
+	@mkdir -p $(INSTALL_DIR)
+	install -m 0755 $(BIN) $(INSTALL_DIR)/$(BIN)
+	@echo "installed $(INSTALL_DIR)/$(BIN)"
+	@echo "if the LaunchAgent is loaded, run: $(BIN) service restart"
+
+# ---- docs / release --------------------------------------------------------
+
+docs: ## Regenerate docs/ from the cobra command tree.
+	$(GO) run ./tools/gendocs
+
+docs-check: ## Fail if docs/ is out of date with the command tree.
+	@$(GO) run ./tools/gendocs >/dev/null
+	@if ! git diff --quiet -- docs; then \
+		echo "docs/ is out of date. Run 'make docs' and commit the result:"; \
+		git --no-pager diff --stat -- docs; \
+		exit 1; \
+	fi
+
+release-check: ## Validate .goreleaser.yaml and build a full release locally, without publishing.
+	@command -v goreleaser >/dev/null 2>&1 || { \
+		echo "goreleaser not found. Install: brew install goreleaser"; \
+		exit 1; \
+	}
+	goreleaser check
+	goreleaser release --snapshot --clean
+
+# ---- aggregate targets -----------------------------------------------------
+
+pipeline: fmt-check vet lint security modcheck docs-check test build ## The full local pipeline - run this before pushing.
+	@echo ""
+	@echo "pipeline: all checks passed."
+
+ci: pipeline ## Alias for `pipeline`; CI runs the same steps, split across jobs.
+
+# ---- housekeeping ----------------------------------------------------------
+
+tools: ## Install/update the external tools the pipeline needs.
+	# golangci-lint recommends its install script over `go install` (see
+	# https://golangci-lint.run/docs/welcome/install/local/) - it ships a
+	# prebuilt binary instead of compiling against your local Go toolchain.
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $$($(GO) env GOPATH)/bin $(GOLANGCI_VERSION)
+	$(GO) install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	@command -v lefthook   >/dev/null 2>&1 || echo "NOTE: lefthook not found - install it (brew install lefthook) then run 'make hooks'."
+	@command -v gitleaks   >/dev/null 2>&1 || echo "NOTE: gitleaks not found - install it (brew install gitleaks) for the pre-commit secret scan."
+	@command -v goreleaser >/dev/null 2>&1 || echo "NOTE: goreleaser not found - install it (brew install goreleaser) for 'make release-check'."
+
+hooks: ## Install the git hooks (pre-commit secret scan, pre-push pipeline).
+	lefthook install
+	@echo "Git hooks installed. Run this once per clone - it is not automatic."
+
+clean:
+	rm -rf $(BIN) dist/

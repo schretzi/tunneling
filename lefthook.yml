@@ -1,0 +1,44 @@
+# Git hooks, managed by lefthook (https://lefthook.dev).
+#
+# Install once per clone - this is NOT automatic, a fresh clone has no hooks
+# until you run it:
+#
+#     make hooks        # == lefthook install
+#
+# To skip the hooks for one commit/push: git commit --no-verify / git push
+# --no-verify.
+
+# --- pre-commit: fast checks on the staged files only ----------------------
+#
+# Kept deliberately quick so committing stays cheap. The full pipeline runs
+# on push instead (see below).
+pre-commit:
+  parallel: true
+  jobs:
+    - name: gitleaks
+      # Blocks a commit that would introduce a secret. This repo deals in
+      # internal hostnames, GCP project ids and SSH login names, and test
+      # fixtures are an easy place to leak a real one: once it is pushed,
+      # rewriting history is the only remedy.
+      run: gitleaks protect --staged --verbose --redact
+      # Fail loudly rather than silently skipping if gitleaks is missing.
+      fail_text: "gitleaks is required. Install it (brew install gitleaks) or commit with --no-verify."
+
+    - name: fmt
+      glob: "*.go"
+      run: golangci-lint fmt --diff {staged_files}
+      fail_text: "Some files are not formatted. Run 'make fmt', re-stage, and commit again."
+
+    - name: vet
+      glob: "*.go"
+      run: go vet ./...
+
+# --- pre-push: the same checks CI runs -------------------------------------
+#
+# This is the gate that stops a red build reaching GitHub: `make pipeline`
+# runs exactly what .github/workflows/ci.yml runs, so if it passes here it
+# passes there.
+pre-push:
+  jobs:
+    - name: pipeline
+      run: make pipeline

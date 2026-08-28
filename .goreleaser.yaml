@@ -1,0 +1,133 @@
+version: 2
+
+project_name: tunneling
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: tunneling
+    main: .
+    binary: tunneling
+    env:
+      - CGO_ENABLED=0
+    # macOS only. Nothing here needs cgo and the tunnelling itself is
+    # portable, but `service` is a launchd job manager — plists, launchctl,
+    # ~/Library/LaunchAgents — so a Linux build would ship a command tree
+    # that cannot work. Restoring Linux means a systemd-user equivalent of
+    # internal/service first; see BACKLOG.md.
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/schretzi/tunneling/internal/version.version={{ .Version }}
+      - -X github.com/schretzi/tunneling/internal/version.commit={{ .FullCommit }}
+      - -X github.com/schretzi/tunneling/internal/version.date={{ .Date }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/*
+      # The starter config lives next to the code that parses it so it can be
+      # embedded (`tunneling config init` writes it). Flattened here so the
+      # archive shows it where someone would look.
+      - src: internal/config/config.example.yaml
+        dst: config.example.yaml
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Casks, not formulas: goreleaser deprecated `brews` for binary releases in
+# favour of `homebrew_casks`, which is what Homebrew now expects for
+# distributing pre-compiled binaries.
+homebrew_casks:
+  - name: tunneling
+    # Publishes to github.com/schretzi/homebrew-tap, so users can
+    # `brew install schretzi/tap/tunneling`. That repository must exist, and
+    # the release workflow needs a HOMEBREW_TAP_TOKEN secret with write
+    # access to it (the default GITHUB_TOKEN only covers this repo).
+    repository:
+      owner: schretzi
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/schretzi/tunneling
+    description: Open a set of SSH and GCP/IAP tunnels in one step
+    license: Apache-2.0
+
+    binaries:
+      - tunneling
+
+    commit_author:
+      name: goreleaser
+      email: noreply@github.com
+
+    caveats: |
+      This only installs the binary. To have the tunnels opened at login:
+
+        tunneling config init      # then edit ~/.config/tunneling/config.yaml
+        tunneling config validate
+        tunneling service install
+
+      GCP tunnels need application default credentials
+      (`gcloud auth application-default login`); SSH tunnels need a key in
+      your running ssh-agent.
+
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            # The release binaries are not notarized, so Gatekeeper would
+            # otherwise refuse to run them after a browser-less download.
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tunneling"]
+          end
+      pre:
+        uninstall: |
+          # The LaunchAgent plist references this binary by absolute path, so
+          # leaving it loaded would make launchd retry a deleted executable
+          # forever. Boot it out and remove the plist first.
+          system_command "#{staged_path}/tunneling",
+                         args: ["service", "uninstall"],
+                         must_succeed: false
+
+    # `brew uninstall` leaves these behind; `brew uninstall --zap` clears
+    # them.
+    zap:
+      trash:
+        - ~/.config/tunneling
+        - ~/Library/Logs/tunneling.log
+        - ~/Library/Logs/tunneling.err.log
+        # Fallback in case the uninstall hook above never ran.
+        - ~/Library/LaunchAgents/com.schretzi.tunneling.plist
+
+release:
+  github:
+    owner: schretzi
+    name: tunneling
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    brew install schretzi/tap/tunneling
+    ```
+
+    Or grab a binary from the assets below.

@@ -1,0 +1,133 @@
+name: CI
+
+# These jobs together run exactly what `make pipeline` runs locally, so a
+# green `make pipeline` means a green CI (and vice versa). Keep the two in
+# sync when changing either.
+#
+# Everything runs on macos-latest: this tool's `service` command manages a
+# launchd job, and internal/service's tests exercise the real plist paths.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GOLANGCI_VERSION: v2.13.1
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build -o tunneling .
+
+      - name: go test
+        run: go test ./... -race -cover
+
+      - name: docs are up to date with the command tree
+        run: make docs-check
+
+  lint:
+    name: Static analysis (golangci-lint)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Also covers the formatting check: the `formatters` block in
+      # .golangci.yml (gofumpt + goimports) is reported by `run` as well.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+
+      - name: gofumpt/goimports check
+        run: golangci-lint fmt --diff ./...
+
+  security:
+    name: Security check (gosec)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # gosec's own action is a Docker container action and does not run on
+      # macOS runners, so install and run it directly.
+      - name: install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+
+      - name: gosec
+        run: gosec -quiet ./...
+
+  dependencies:
+    name: Dependency check (govulncheck + go mod tidy/verify)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: go mod verify
+        run: go mod verify
+
+      - name: go mod tidy (must be a no-op)
+        run: |
+          cp go.mod go.mod.orig
+          cp go.sum go.sum.orig
+          go mod tidy
+          diff -u go.mod.orig go.mod
+          diff -u go.sum.orig go.sum
+
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+
+  release-config:
+    name: Release config (goreleaser check)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Catches a broken .goreleaser.yaml here rather than at release time,
+      # when a tag has already been pushed.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks scans history, not just the tip commit
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

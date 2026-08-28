@@ -1,0 +1,82 @@
+# Example tunneling config. Copy to ~/.config/tunneling/config.yaml (or pass
+# --config), and adjust for your environment. `tunneling config init` writes
+# this exact file.
+#
+# Check it with:  tunneling config validate
+
+# Local interface every listener binds to. Optional; shown here at its default.
+#
+# Loopback on purpose: a tunnel is a hole through a perimeter, and binding
+# 0.0.0.0 hands anyone on the same network a route to whatever is on the far
+# end. Set it to 0.0.0.0 only if you deliberately want to share the tunnels.
+bindAddress: 127.0.0.1
+
+# How "ssh" tunnels verify the SSH server's host key. Optional; shown here at
+# its default. Mirrors ssh(1)'s StrictHostKeyChecking:
+#
+#   accept-new   record a host we have never seen, but refuse to connect if a
+#                *known* host presents a different key. The default.
+#   strict       refuse any host not already in known_hosts.
+#   off          accept anything and record nothing.
+#
+# The one failure worth knowing about: rebuilding a jump host changes its key,
+# and accept-new then refuses until the stale known_hosts line is removed.
+# That is intended — a changed key is indistinguishable from interception —
+# but on hosts that are routinely recreated it is noise, and "off" is the
+# escape hatch.
+hostKeyChecking: accept-new
+
+# Where host keys are read from and appended to. Optional; the same file
+# ssh(1) uses. Note that chained tunnels all appear as "[localhost]:<port>",
+# so the recorded key belongs to whichever jump host that port points at.
+knownHostsPath: ~/.ssh/known_hosts
+
+daemon:
+  # The daemon's own log. Optional, shown here at its default. Changing it
+  # needs a `tunneling service restart`.
+  #
+  # There are no rotation settings here: newsyslog owns rotation, via
+  # /etc/newsyslog.d/tunneling.conf. That matters because a flapping VPN
+  # produces a connect/disconnect pair per tunnel per attempt. The daemon's
+  # only job is to notice when newsyslog has renamed the file, and reopen.
+  log:
+    path: ~/Library/Logs/tunneling.log
+
+# Every tunnel is a local port forward. The map key is the tunnel's name, used
+# by --tunnel and shown by `tunneling status`.
+tunnels:
+  # kind: gcp — forward through Google Cloud Identity-Aware Proxy, straight to
+  # a Compute Engine instance. No bastion and no SSH involved; IAP itself is
+  # the transport.
+  #
+  # Needs application default credentials:
+  #   gcloud auth application-default login
+  jump-dev:
+    kind: gcp
+    project: my-project-development
+    zone: europe-west4-a
+    nic: nic0
+    # The Compute Engine *instance name*, not a hostname or IP.
+    remoteHost: development-jumphost
+    remotePort: 22
+    localPort: 10022
+
+  # kind: ssh — an ordinary local port forward through an SSH server,
+  # authenticating with the keys held by your running ssh-agent (`ssh-add -l`
+  # must list at least one).
+  #
+  # One SSH connection is opened per tunnel and every forwarded connection is
+  # a channel on it, exactly as `ssh -L` does — not a fresh handshake each
+  # time.
+  #
+  # This one chains onto the tunnel above: tunnelHost/tunnelPort point at the
+  # local end of jump-dev, so connections reach a private in-cluster address
+  # that is only routable from the jump host.
+  k8s-dev:
+    kind: ssh
+    tunnelHost: localhost
+    tunnelPort: 10022
+    user: my-login-name
+    remoteHost: 10.0.0.1
+    remotePort: 443
+    localPort: 10443

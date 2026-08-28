@@ -1,0 +1,170 @@
+# golangci-lint v2 configuration. See https://golangci-lint.run/docs/configuration/file/
+#
+# Based on the recommended production set, minus the linters that are a poor
+# fit for this project (see the `disable` block for the reasoning). Run it
+# with `make lint`; `make pipeline` runs it as part of the full local
+# pipeline that mirrors CI.
+version: "2"
+
+run:
+  concurrency: 4
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0 # 0 = unlimited (we want ALL issues, not a sample)
+  max-same-issues: 0
+
+linters:
+  enable:
+    # correctness
+    - govet # copylocks, printf formats, struct tags, unreachable code
+    - staticcheck # deprecated APIs, common mistakes, simplifications
+    - unused # unused variables, functions, types
+    - errcheck # unchecked error returns and type assertions
+    - errorlint # correct use of errors.Is/As and %w wrapping
+    - nilerr # returning nil error when err is non-nil
+    - forcetypeassert # type assertions without a comma-ok check
+    - copyloopvar # loop variable copy issues
+    - durationcheck # time.Duration * time.Duration bugs
+    - reassign # package-level variable reassignment
+    # style
+    - gocritic # unnecessary conversions, range copies, redundant code
+    - revive # naming conventions, exported types, stuttered package names
+    - whitespace # trailing whitespace, unnecessary blank lines
+    - godot # exported-symbol comments must end with a period
+    - misspell # common English misspellings
+    - dupword # duplicate words in comments and strings
+    - predeclared # shadowing Go built-ins (len, cap, error)
+    - errname # error type/var naming conventions (ErrFoo, FooError)
+    - asciicheck # non-ASCII identifiers (homoglyph/trojan source attacks)
+    # complexity
+    - gocyclo # cyclomatic complexity threshold
+    - nestif # deeply nested if/else chains
+    - funlen # function length limits
+    - dupl # code duplication detection
+    # performance
+    - perfsprint # faster alternatives to fmt.Sprintf
+    - unconvert # unnecessary type conversions
+    - ineffassign # assignments to variables never read
+    - goconst # repeated literals that should be constants
+    # security & resources
+    - gosec # also runnable standalone via `make security`
+    - bidichk # dangerous bidirectional Unicode (CVE-2021-42574)
+    - bodyclose # unclosed HTTP response bodies
+    - noctx # HTTP requests missing context.Context
+    - containedctx # context.Context stored in a struct field
+    - fatcontext # context.With* in loops (unbounded chain / memory leak)
+    # testing
+    - thelper # test helpers missing t.Helper()
+    - usetesting # t.Setenv/t.TempDir instead of the os equivalents
+    # modernization & meta
+    - modernize # patterns replaceable with newer Go features
+    - exptostd # golang.org/x/exp functions with stdlib equivalents
+    - intrange # range over an integer instead of a C-style loop
+    - usestdlibvars # stdlib constants instead of hardcoded values
+    - exhaustive # switch statements not covering all enum values
+    - nolintlint # enforces proper //nolint directive usage
+
+  disable:
+    # --- deliberately off for this project ------------------------------
+    - wsl_v5 # blank-line placement; pure opinion, and noisy on existing code
+    - paralleltest # these tests mutate process globals (the standard logger's
+      # output, os.Stderr, HOME), so they must NOT run in parallel
+    - noinlineerr # bans `if err := ...; err != nil` - that is idiomatic Go
+    - sloglint # this project logs via the standard logger, not slog
+    - loggercheck # no structured logger in use
+    - testifylint # no testify in use (stdlib testing only)
+    # --- off for the same reasons as the upstream recommended config ----
+    - lll # line length - handled by the formatter
+    - prealloc # high false-positive rate without profiling first
+    - wrapcheck # forces wrapping every external error - too noisy
+    - err113 # forces sentinel errors everywhere - too opinionated
+    - mnd # magic number detector - flags obvious constants
+    - iface # interface pollution detector - not mature enough
+    - nakedret # overlaps with funlen
+    - gocognit # redundant with gocyclo + nestif
+    - cyclop # redundant with gocyclo
+    - depguard # import allow/deny lists - needs per-project config
+    - goheader # file header enforcement - project-specific policy
+    - importas # import alias enforcement - needs per-project config
+    - funcorder # function ordering - too opinionated
+    - godoclint # overlaps with godot and revive
+    - varnamelen # Go favors short names
+    - exhaustruct # breaks the zero-value idiom
+    - gochecknoglobals # too strict, many valid uses
+    - gochecknoinits # too strict, many valid uses
+    - unparam # medium false-positive rate with interfaces
+    - makezero # noisy, often wrong about intent
+    - testpackage # forces _test packages - these tests exercise unexported code
+    - embeddedstructfieldcheck # minor style
+    - iotamixing # very rare issue
+    - unqueryvet # SQL-specific, no SQL here
+    - recvcheck # overlaps with gocritic
+    - mirror # very few real hits
+    - protogetter # protobuf only
+    - spancheck # OpenTelemetry only
+    - zerologlint # zerolog only
+    - rowserrcheck # database/sql only
+    - sqlclosecheck # database/sql only
+
+  settings:
+    dupl:
+      threshold: 150
+    errcheck:
+      check-type-assertions: true
+    exhaustive:
+      # A `default` clause that handles the remaining values counts as
+      # covering them.
+      default-signifies-exhaustive: true
+    funlen:
+      lines: 120
+      statements: 80
+    goconst:
+      min-len: 3
+      min-occurrences: 4
+    gocyclo:
+      min-complexity: 15
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    paths:
+      - vendor$
+    rules:
+      # Test files repeat short literals (ports, hostnames, kinds) across
+      # table cases, and a long table of assertions is not "complex".
+      - path: _test\.go
+        linters:
+          - gosec
+          - goconst
+          - dupl
+          - funlen
+          - gocyclo # a long table of assertions is not "complex" in any useful sense
+          - noctx
+
+formatters:
+  # Formatters are opt-in: only those listed here run. `make fmt` applies
+  # them, `make fmt-check` (and CI) fails if anything is unformatted.
+  enable:
+    - gofumpt # superset of gofmt: gofmt's rules first, then its own
+    - goimports # import management: groups, adds and drops imports
+  settings:
+    gofumpt:
+      extra:
+        # The v2.13 spelling of the old `extra-rules: true`.
+        group-params: true
+    goimports:
+      # Without this, goimports cannot tell this module's own packages from
+      # the standard library - the module path has no dot in it - and merges
+      # them into the stdlib import group.
+      local-prefixes:
+        - github.com/schretzi/tunneling
+  exclusions:
+    generated: lax
