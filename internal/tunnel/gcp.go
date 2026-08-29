@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/schretzi/tunneling/internal/config"
+	"github.com/schretzi/tunneling/internal/health"
 
 	"github.com/cedws/iapc/iap"
 	"golang.org/x/oauth2"
@@ -22,7 +23,7 @@ import (
 // source is resolved once here rather than per connection: it refreshes
 // itself, and resolving it up front turns a missing login into a startup
 // error instead of a failure on the first connection.
-func serveIAP(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
+func serveIAP(ctx context.Context, cfg *config.Config, t config.Tunnel, rec *health.Recorder) error {
 	tokenSource, err := google.DefaultTokenSource(ctx)
 	if err != nil {
 		return fmt.Errorf("resolving Google application default credentials "+
@@ -49,7 +50,7 @@ func serveIAP(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
 			}
 			return fmt.Errorf("accepting on %s: %w", listener.Addr(), err)
 		}
-		go forwardIAP(ctx, t, conn, &tokenSource)
+		go forwardIAP(ctx, t, conn, &tokenSource, rec)
 	}
 }
 
@@ -58,7 +59,7 @@ func serveIAP(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
 //
 // Errors here are per-connection and never fatal: a token blip or an instance
 // that is down should cost you that one connection, not every tunnel.
-func forwardIAP(ctx context.Context, t config.Tunnel, local net.Conn, tokenSource *oauth2.TokenSource) {
+func forwardIAP(ctx context.Context, t config.Tunnel, local net.Conn, tokenSource *oauth2.TokenSource, rec *health.Recorder) {
 	defer func() { _ = local.Close() }()
 
 	remote, err := iap.Dial(ctx,
@@ -69,11 +70,17 @@ func forwardIAP(ctx context.Context, t config.Tunnel, local net.Conn, tokenSourc
 	)
 	if err != nil {
 		log.Printf("tunnel %s: dialing IAP for %s: %v", t.Name, t.Endpoint(), err)
+		rec.Record(t.Name, health.OutcomeFailure, 0, err.Error())
 		return
 	}
 	defer func() { _ = remote.Close() }()
 
 	log.Printf("tunnel %s: connected %s -> %s", t.Name, local.RemoteAddr(), t.Endpoint())
-	moved := pipe(ctx, t.Name, local, remote)
+	// Report health as soon as the far end answers, not only when the
+	// connection ends: a multiplexed session can stay open for hours.
+	firstReply := func() { rec.Record(t.Name, health.OutcomeSuccess, 0, "") }
+	moved := pipe(ctx, t.Name, local, remote, firstReply)
+	outcome, reason := moved.outcome()
+	rec.Record(t.Name, outcome, moved.FromRemote, reason)
 	log.Printf("tunnel %s: disconnected %s (%d bytes)", t.Name, local.RemoteAddr(), moved.total())
 }

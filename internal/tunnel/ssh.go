@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/schretzi/tunneling/internal/config"
+	"github.com/schretzi/tunneling/internal/health"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -34,7 +35,7 @@ const sshDialTimeout = 15 * time.Second
 // per forwarded connection and closed none of them until the tunnel shut
 // down, so every kubectl call permanently leaked an SSH client and, through
 // it, an IAP connection to Google.
-func serveSSH(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
+func serveSSH(ctx context.Context, cfg *config.Config, t config.Tunnel, rec *health.Recorder) error {
 	// Resolve everything that can fail on bad configuration now, so a typo
 	// is a startup error rather than a surprise on the first connection.
 	login, err := sshLogin(t)
@@ -72,7 +73,7 @@ func serveSSH(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
 			}
 			return fmt.Errorf("accepting on %s: %w", listener.Addr(), err)
 		}
-		go forwardSSH(ctx, t, dialer, conn)
+		go forwardSSH(ctx, t, dialer, conn, rec)
 	}
 }
 
@@ -81,20 +82,26 @@ func serveSSH(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
 //
 // Errors here are per-connection and never fatal: an unreachable jump host
 // should cost you that connection, not every tunnel in the process.
-func forwardSSH(ctx context.Context, t config.Tunnel, dialer *sshDialer, local net.Conn) {
+func forwardSSH(ctx context.Context, t config.Tunnel, dialer *sshDialer, local net.Conn, rec *health.Recorder) {
 	defer func() { _ = local.Close() }()
 
 	remote, err := dialThroughSSH(ctx, t, dialer)
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Printf("tunnel %s: %v", t.Name, err)
+			rec.Record(t.Name, health.OutcomeFailure, 0, err.Error())
 		}
 		return
 	}
 	defer func() { _ = remote.Close() }()
 
 	log.Printf("tunnel %s: connected %s -> %s", t.Name, local.RemoteAddr(), t.Endpoint())
-	moved := pipe(ctx, t.Name, local, remote)
+	// Report health as soon as the far end answers, not only when the
+	// connection ends: a multiplexed session can stay open for hours.
+	firstReply := func() { rec.Record(t.Name, health.OutcomeSuccess, 0, "") }
+	moved := pipe(ctx, t.Name, local, remote, firstReply)
+	outcome, reason := moved.outcome()
+	rec.Record(t.Name, outcome, moved.FromRemote, reason)
 	log.Printf("tunnel %s: disconnected %s (%d bytes)", t.Name, local.RemoteAddr(), moved.total())
 }
 

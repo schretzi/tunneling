@@ -13,6 +13,7 @@ import (
 	"log"
 
 	"github.com/schretzi/tunneling/internal/config"
+	"github.com/schretzi/tunneling/internal/health"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -28,14 +29,14 @@ import (
 //
 // Nothing is retried in-process: a half-up set of tunnels that silently
 // stopped forwarding is far worse to debug than a process that exits loudly.
-func Run(ctx context.Context, cfg *config.Config, tunnels []config.Tunnel) error {
+func Run(ctx context.Context, cfg *config.Config, tunnels []config.Tunnel, rec *health.Recorder) error {
 	if len(tunnels) == 0 {
 		return errors.New("no tunnels selected")
 	}
 
-	// The ssh-agent is only needed by `kind: ssh` tunnels, and
-	// sshtunnel.SSHAgent() panics rather than returning an error when the
-	// socket is missing — so check up front, and only when it matters.
+	// The ssh-agent is only needed by `kind: ssh` tunnels. Checking up front
+	// turns "the agent holds no keys" into a startup error instead of an
+	// opaque authentication failure on the first connection.
 	if config.HasKind(tunnels, config.KindSSH) {
 		if err := checkSSHAgent(ctx); err != nil {
 			return err
@@ -45,7 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, tunnels []config.Tunnel) error
 	g, ctx := errgroup.WithContext(ctx)
 	for _, t := range tunnels {
 		g.Go(func() error {
-			if err := serve(ctx, cfg, t); err != nil {
+			if err := serve(ctx, cfg, t, rec); err != nil {
 				return fmt.Errorf("tunnel %s: %w", t.Name, err)
 			}
 			log.Printf("tunnel %s: stopped", t.Name)
@@ -56,12 +57,12 @@ func Run(ctx context.Context, cfg *config.Config, tunnels []config.Tunnel) error
 }
 
 // serve dispatches one tunnel to its transport.
-func serve(ctx context.Context, cfg *config.Config, t config.Tunnel) error {
+func serve(ctx context.Context, cfg *config.Config, t config.Tunnel, rec *health.Recorder) error {
 	switch t.Kind {
 	case config.KindGCP:
-		return serveIAP(ctx, cfg, t)
+		return serveIAP(ctx, cfg, t, rec)
 	case config.KindSSH:
-		return serveSSH(ctx, cfg, t)
+		return serveSSH(ctx, cfg, t, rec)
 	default:
 		// Unreachable: config.Validate rejects any other kind at load time.
 		return fmt.Errorf("unknown kind %q", t.Kind)

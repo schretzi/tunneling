@@ -4,30 +4,40 @@ The detailed plan for whatever is currently being implemented. Clear it back
 to this header when a plan ships — finished plans belong in the commit
 history, not here.
 
-## In progress: honest tunnel status
+*Nothing in progress.*
 
-`status` reports whether the local port is *bound*, which is a property of the
-listener, not the tunnel. `jump-neo` pointed at a deleted GCP project, failed
-every single connection with IAP `code 4033 (not authorized)`, carried zero
-bytes for hours — and reported `OPEN` the whole time, which macswitcher
-observe faithfully rendered as "13/13 tunnels open".
+---
 
-- [x] Replace `elliotchance/sshtunnel` (prerequisite: the health signal hangs
-      off the connection lifecycle, which that library got wrong).
-- [ ] Track per-tunnel health in the daemon: last success, last error,
-      consecutive failures, bytes moved. `pipe` already returns byte counts.
-- [ ] Publish it to a state file the daemon writes and `status` reads.
-      Needs a path convention — `CONVENTIONS.md` covers config and logs but
-      not state. Proposing `~/.local/state/<name>/`, matching the XDG-style
-      `~/.config/<name>/` already in §1.
-- [ ] Report four states, combining a live port probe with that file:
-      `DOWN` (nothing listening) / `FAILING` (bound, recent forwards errored
-      or moved zero bytes) / `IDLE` (bound, never used — no evidence either
-      way) / `OK` (bound, recently carried data). `IDLE` must not render as
-      green; that optimism is what hid jump-neo.
-- [ ] `status --json`, and switch macswitcher's `parseTunnelingStatus` onto
-      it. That function scrapes the literal `OPEN` field today, so the new
-      vocabulary breaks it — the two repos have to land together.
+## Shipped: honest tunnel status (2026-08-29)
+
+`status` reported whether the local port was *bound*, a property of the
+listener rather than the tunnel. `jump-neo` pointed at a deleted GCP project,
+failed every connection with IAP `code 4033`, carried zero bytes for hours —
+and reported `OPEN` throughout, which macswitcher observe rendered as
+"13/13 tunnels open".
+
+- [x] `internal/health`: per-tunnel record (last success/failure, consecutive
+      failures, last error, bytes), published atomically to a state file.
+- [x] `statePath`, defaulting to `~/.local/state/tunneling/health.json`.
+      Added to MacbookSetup/CONVENTIONS.md as §2a, which previously covered
+      config and logs but said nothing about state.
+- [x] Five states from two signals — a live port probe plus the daemon's
+      record: `DOWN` / `FAILING` / `IDLE` / `OK` / `UNKNOWN`. Non-zero exit
+      only on DOWN or FAILING.
+- [x] Classification by *bytes*, not error strings: received > 0 is success,
+      sent > 0 with nothing received is failure, and neither is neutral —
+      which is what `status`'s own probe looks like, so probing cannot
+      manufacture its own answer.
+- [x] Success is recorded on the first reply, not at connection close. Caught
+      in live testing: a multiplexed SSH session over a gcp tunnel stays open
+      for hours, so the gcp tunnels read IDLE while at their busiest.
+- [x] `status --json`, and macswitcher's `parseTunnelingStatus` switched onto
+      it. It scraped the literal `OPEN` field, which the new vocabulary
+      breaks.
+
+Verified live against the real 13-tunnel config: 11 OK, and both halves of the
+deleted-project chain FAILING with their reasons. macswitcher observe now
+reports "11/13 tunnels ok" and names them.
 
 ---
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ func execute(t *testing.T, args ...string) (string, error) {
 		rootCmd.SetArgs(nil)
 		configPath = config.DefaultPath()
 		tunnels = nil
+		statusJSON = false
 	})
 
 	err := rootCmd.Execute()
@@ -93,10 +95,12 @@ func TestConfigValidateReportsBadConfig(t *testing.T) {
 	}
 }
 
-func TestStatusReportsClosedPorts(t *testing.T) {
+// A port with no listener is DOWN, and that is worth a non-zero exit.
+func TestStatusReportsDownPorts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	// Port 1 needs privileges to bind, so nothing local is listening on it.
 	const body = `
+statePath: /nonexistent/health.json
 tunnels:
   closed:
     kind: ssh
@@ -112,10 +116,54 @@ tunnels:
 
 	out, err := execute(t, "status", "--config", path)
 	if err == nil {
-		t.Error("status exited zero with a closed port, want non-zero")
+		t.Error("status exited zero with a down port, want non-zero")
 	}
-	if !strings.Contains(out, "CLOSED") {
-		t.Errorf("status output = %q, want a CLOSED row", out)
+	if !strings.Contains(out, "DOWN") {
+		t.Errorf("status output = %q, want a DOWN row", out)
+	}
+	// With no daemon publishing health, say so rather than implying the
+	// probe told the whole story.
+	if !strings.Contains(out, "No daemon is publishing health") {
+		t.Errorf("status output = %q, want the no-daemon note", out)
+	}
+}
+
+// The JSON form is what macswitcher consumes; scraping the table is what
+// broke when this vocabulary changed.
+func TestStatusJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const body = `
+statePath: /nonexistent/health.json
+tunnels:
+  closed:
+    kind: ssh
+    tunnelHost: localhost
+    tunnelPort: 22
+    remoteHost: example.internal
+    remotePort: 443
+    localPort: 1
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seeding config: %v", err)
+	}
+
+	out, _ := execute(t, "status", "--json", "--config", path)
+
+	var doc struct {
+		DaemonRunning bool `json:"daemonRunning"`
+		Tunnels       []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"tunnels"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("status --json is not valid JSON: %v\n%s", err, out)
+	}
+	if doc.DaemonRunning {
+		t.Error("daemonRunning is true with no daemon")
+	}
+	if len(doc.Tunnels) != 1 || doc.Tunnels[0].Name != "closed" || doc.Tunnels[0].State != "DOWN" {
+		t.Errorf("unexpected tunnels: %+v", doc.Tunnels)
 	}
 }
 

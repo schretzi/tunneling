@@ -23,9 +23,12 @@ func quietLogs(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prev) })
 }
 
+// A nil *health.Recorder is deliberately supported: these tests exercise the
+// tunnel lifecycle, not health publishing, and Record tolerates a nil
+// receiver.
 func TestRunRejectsEmptySelection(t *testing.T) {
 	quietLogs(t)
-	err := Run(t.Context(), &config.Config{}, nil)
+	err := Run(t.Context(), &config.Config{}, nil, nil)
 	if err == nil {
 		t.Fatal("Run succeeded with no tunnels, want error")
 	}
@@ -36,7 +39,7 @@ func TestRunRejectsUnknownKind(t *testing.T) {
 	cfg := &config.Config{BindAddress: "127.0.0.1"}
 	// config.Validate would normally reject this; serve must still not
 	// silently succeed if it ever gets through.
-	err := Run(t.Context(), cfg, []config.Tunnel{{Name: "x", Kind: "telnet"}})
+	err := Run(t.Context(), cfg, []config.Tunnel{{Name: "x", Kind: "telnet"}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unknown kind") {
 		t.Fatalf("Run error = %v, want it to mention an unknown kind", err)
 	}
@@ -74,7 +77,7 @@ func TestRunFailsOnPortInUse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	if err := Run(ctx, cfg, []config.Tunnel{tun}); err == nil {
+	if err := Run(ctx, cfg, []config.Tunnel{tun}, nil); err == nil {
 		t.Fatal("Run succeeded with the port already bound, want error")
 	} else if !strings.Contains(err.Error(), "busy") {
 		t.Errorf("Run error = %v, want it to name the tunnel", err)
@@ -107,7 +110,7 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, cfg, []config.Tunnel{tun}) }()
+	go func() { done <- Run(ctx, cfg, []config.Tunnel{tun}, nil) }()
 
 	// Wait for the listener to actually be up before cancelling, so the test
 	// exercises the shutdown path rather than a startup failure.

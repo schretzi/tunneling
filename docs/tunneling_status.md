@@ -1,17 +1,26 @@
 ## tunneling status
 
-Show the configured tunnels and whether each local port is open
+Show each tunnel's state: whether it is listening and whether traffic works
 
 ### Synopsis
 
-List every configured tunnel and probe its local port.
+Report every configured tunnel.
 
-The probe is a loopback TCP connect, so it reports whether *something* is
-listening on that port — normally this tool's daemon, but a stale process or
-an unrelated service holding the port looks the same. Use `service status`
-to check whether the LaunchAgent itself is running.
+Two independent signals are combined. A loopback TCP connect says whether
+something is listening on the local port. The daemon's own record — written to
+the state file, one entry per tunnel — says whether traffic through it
+actually reached the far end.
 
-Exits non-zero if any selected tunnel's port is closed.
+  DOWN     nothing is listening on the local port
+  FAILING  listening, but the most recent forward failed or got no reply
+  IDLE     listening, and nothing has used it yet — no evidence either way
+  OK       listening, and the destination recently answered
+  UNKNOWN  listening, but no live daemon is publishing health for it
+
+IDLE is not OK. A tunnel nobody has used tells you nothing, and reporting that
+as healthy is how a tunnel to a deleted project went unnoticed for hours.
+
+Exits non-zero if any selected tunnel is DOWN or FAILING.
 
 ```
 tunneling status [flags]
@@ -21,6 +30,7 @@ tunneling status [flags]
 
 ```
   -h, --help   help for status
+      --json   emit machine-readable JSON instead of a table
 ```
 
 ### Options inherited from parent commands

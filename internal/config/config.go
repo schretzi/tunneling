@@ -36,12 +36,9 @@ const (
 
 // Config is the top-level YAML configuration.
 type Config struct {
-	// BindAddress is the local interface GCP/IAP listeners bind to. It
-	// defaults to DefaultBindAddress; set it to "0.0.0.0" to expose the
-	// tunnels to the rest of the network.
-	//
-	// It does not apply to `kind: ssh` tunnels: elliotchance/sshtunnel hard-
-	// codes a "localhost:<port>" listener, so those are always loopback-only.
+	// BindAddress is the local interface every listener binds to. It defaults
+	// to DefaultBindAddress; set it to "0.0.0.0" to expose the tunnels to the
+	// rest of the network.
 	BindAddress string `yaml:"bindAddress"`
 
 	// HostKeyChecking controls how `kind: ssh` tunnels verify the SSH
@@ -52,6 +49,10 @@ type Config struct {
 	// KnownHostsPath is the known_hosts file consulted and appended to.
 	// Defaults to DefaultKnownHostsPath, i.e. the same file ssh(1) uses.
 	KnownHostsPath string `yaml:"knownHostsPath"`
+
+	// StatePath is where the daemon publishes per-tunnel health for `status`
+	// to read. Defaults to DefaultStatePath.
+	StatePath string `yaml:"statePath"`
 
 	Daemon DaemonConfig `yaml:"daemon"`
 
@@ -115,9 +116,9 @@ type Tunnel struct {
 }
 
 // Port is a TCP port as written in the config. It is a string because that is
-// what both the IAP client and elliotchance/sshtunnel take, and it accepts
-// both the bare (`22`) and quoted (`"22"`) YAML spellings — the pre-1.0 tool
-// loaded through viper, which coerced either.
+// what the IAP client takes, and it accepts both the bare (`22`) and quoted
+// (`"22"`) YAML spellings — the pre-1.0 tool loaded through viper, which
+// coerced either.
 type Port string
 
 // UnmarshalYAML accepts any scalar and keeps its literal text, so an integer
@@ -145,13 +146,12 @@ func (p Port) validate() error {
 	return nil
 }
 
-// DefaultBindAddress is the interface GCP/IAP listeners bind to when
-// bindAddress is unset.
+// DefaultBindAddress is the interface listeners bind to when bindAddress is
+// unset.
 //
-// Loopback, not 0.0.0.0. A tunnel is a hole through a perimeter — an IAP
-// listener on 0.0.0.0 hands anyone on the same coffee-shop Wi-Fi a route to a
-// production jump host. `kind: ssh` tunnels are loopback-only regardless, so
-// this also makes the two kinds behave the same way.
+// Loopback, not 0.0.0.0. A tunnel is a hole through a perimeter — a listener
+// on 0.0.0.0 hands anyone on the same coffee-shop Wi-Fi a route to a
+// production jump host.
 const DefaultBindAddress = "127.0.0.1"
 
 // Host key checking modes for `kind: ssh` tunnels.
@@ -181,6 +181,14 @@ const (
 
 // DefaultKnownHostsPath is the known_hosts file used when none is configured.
 func DefaultKnownHostsPath() string { return "~/.ssh/known_hosts" }
+
+// DefaultStatePath returns where the daemon publishes tunnel health.
+//
+// ~/.local/state, matching the XDG-style ~/.config/<name>/ this tool already
+// uses for its config. It is deliberately not ~/Library/Logs (that is for
+// logs) nor ~/.config (that is for things you edit) — this is machine-written
+// state that is safe to delete. See MacbookSetup/CONVENTIONS.md §2a.
+func DefaultStatePath() string { return "~/.local/state/tunneling/health.json" }
 
 // LocalAddr returns the address a tunnel's listener should bind to.
 func (c *Config) LocalAddr(t Tunnel) string {
@@ -284,6 +292,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.KnownHostsPath == "" {
 		c.KnownHostsPath = DefaultKnownHostsPath()
+	}
+	if c.StatePath == "" {
+		c.StatePath = DefaultStatePath()
 	}
 	for name, t := range c.Tunnels {
 		t.Name = name

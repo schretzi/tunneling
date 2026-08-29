@@ -28,6 +28,6 @@ of a "gcp" tunnel to reach a private service behind an IAP-only jump host.
 * [tunneling config](tunneling_config.md)	 - Create and check the tunneling config file
 * [tunneling daemon](tunneling_daemon.md)	 - Open the configured tunnels and hold them open (invoked by launchd)
 * [tunneling service](tunneling_service.md)	 - Manage the tunneling LaunchAgent
-* [tunneling status](tunneling_status.md)	 - Show the configured tunnels and whether each local port is open
+* [tunneling status](tunneling_status.md)	 - Show each tunnel's state: whether it is listening and whether traffic works
 * [tunneling version](tunneling_version.md)	 - Print the tunneling version, build info and licence
 

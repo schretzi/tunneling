@@ -31,6 +31,11 @@ hostKeyChecking: accept-new
 # so the recorded key belongs to whichever jump host that port points at.
 knownHostsPath: ~/.ssh/known_hosts
 
+# Where the daemon publishes per-tunnel health for `tunneling status` to read.
+# Optional; shown here at its default. Machine-written state, safe to delete —
+# the daemon rewrites it.
+statePath: ~/.local/state/tunneling/health.json
+
 daemon:
   # The daemon's own log. Optional, shown here at its default. Changing it
   # needs a `tunneling service restart`.

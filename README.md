@@ -20,8 +20,8 @@ to remember.
 - One config, many tunnels, opened together and held open.
 - Runs as a macOS LaunchAgent (`service install`), so the tunnels are up at
   login.
-- `status` probes every configured local port and tells you what is actually
-  listening.
+- `status` reports whether each tunnel's traffic actually works, not just
+  whether a port is bound (see [Tunnel status](#tunnel-status)).
 - `config validate` catches a broken config before it becomes a background
   crash-loop — `service install` refuses to install one.
 - Listeners bind loopback by default (see [Bind address](#bind-address)).
@@ -149,8 +149,9 @@ tunneling daemon
 # Just two of them
 tunneling daemon --tunnel jump-dev --tunnel k8s-dev
 
-# What is actually listening right now
+# What is actually working right now
 tunneling status
+tunneling status --json          # machine-readable
 
 # Config handling
 tunneling config init
@@ -171,6 +172,44 @@ to all configured tunnels, and tab-completes from your config).
 
 Full command reference: [`docs/tunneling.md`](docs/tunneling.md) (generated
 from the CLI itself — see [Development](#development)).
+
+### Tunnel status
+
+```
+NAME       KIND  LOCAL            STATE    LAST OK  FAILS  DESTINATION
+jump-dev   gcp   127.0.0.1:10022  OK       6s ago          development-jumphost:22
+k8s-dev    ssh   127.0.0.1:10443  OK       5s ago          10.127.240.13:443
+jump-neo   gcp   127.0.0.1:16666  FAILING  never    3      old-instance:22
+
+jump-neo: sent 12 bytes, received nothing back
+```
+
+Two independent signals are combined: a loopback TCP connect says whether
+something is listening, and the daemon's own record — published to
+`statePath` — says whether traffic reached the far end.
+
+| state | meaning |
+| --- | --- |
+| `DOWN` | nothing is listening on the local port |
+| `FAILING` | listening, but the most recent forward failed or got no reply |
+| `IDLE` | listening, nothing has used it yet — no evidence either way |
+| `OK` | listening, and the destination recently answered |
+| `UNKNOWN` | listening, but no live daemon is publishing health for it |
+
+Exits non-zero on `DOWN` or `FAILING`.
+
+**`IDLE` is not `OK`.** A tunnel nobody has used tells you nothing. This
+distinction is the whole point: a tunnel pointing at a deleted GCP project
+kept its listener bound and reported "open" for hours while failing every
+single connection, because a bound port says nothing about the far end.
+
+Health is classified by bytes, not error strings, because errors here are
+ambiguous — closing the far end after a client hangs up produces one, and so
+does a genuinely dead destination. What is unambiguous is whether the far end
+ever answered: data received means the tunnel works, data sent with nothing
+received means it does not, and a client that connects and leaves without
+sending proves nothing. That last case is exactly what `status`'s own probe
+looks like, which is why the probe cannot manufacture its own answer.
 
 ### Failure behaviour
 
@@ -229,6 +268,10 @@ left pointing at a deleted binary. `brew uninstall --zap tunneling`
 additionally removes your config and logs.
 
 ### Logs
+
+State — the per-tunnel health `status` reads — is published to
+`~/.local/state/tunneling/health.json`. It is machine-written and safe to
+delete; the daemon rewrites it.
 
 Logs live directly in `~/Library/Logs/`, named after the binary:
 

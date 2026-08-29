@@ -20,6 +20,14 @@ worked on yet. The plan for whatever *is* being worked on lives in `PLAN.md`.
       systemd-user equivalent of `internal/service` would let them come back.
       Windows was dropped outright: the ssh-agent check dials a Unix socket.
 
+- [ ] Health is per daemon run: restarting resets every counter and every
+      tunnel goes back to IDLE. Fine for "is it working now", useless for "has
+      this been flaky all week". Persisting across restarts means deciding how
+      much history is worth keeping.
+- [ ] A tunnel that worked hours ago and has been untouched since still reads
+      OK. There is no staleness horizon, because there is no way to tell "not
+      used" from "quietly broken" without generating traffic.
+
 ## Housekeeping
 
 - [ ] `internal/logfile`, `internal/service` and `internal/version` are

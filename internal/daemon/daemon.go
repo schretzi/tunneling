@@ -4,11 +4,13 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
 
 	"github.com/schretzi/tunneling/internal/config"
+	"github.com/schretzi/tunneling/internal/health"
 	"github.com/schretzi/tunneling/internal/tunnel"
 )
 
@@ -67,13 +69,21 @@ func Run(ctx context.Context, configPath string, tunnelNames []string) (err erro
 		return err
 	}
 
+	// Publish per-tunnel health so `status` can report whether traffic
+	// actually works, rather than only whether a port is bound.
+	rec, stopPublishing, err := startHealth(cfg, selected)
+	if err != nil {
+		return err
+	}
+	defer stopPublishing()
+
 	// logw.Path(), not cfg.Daemon.Log.Path: the configured value may still be
 	// a literal "~/...", and a log line naming a path you cannot `tail` is
 	// worse than no log line.
-	log.Printf("daemon starting: %d tunnel(s), bindAddress=%s, log=%s",
-		len(selected), cfg.BindAddress, logw.Path())
+	log.Printf("daemon starting: %d tunnel(s), bindAddress=%s, log=%s, state=%s",
+		len(selected), cfg.BindAddress, logw.Path(), rec.Path())
 
-	err = tunnel.Run(ctx, cfg, selected)
+	err = tunnel.Run(ctx, cfg, selected, rec)
 	if ctx.Err() != nil {
 		log.Println("received shutdown signal, exiting")
 		// A tunnel erroring out *because* we are shutting down is not a
@@ -81,4 +91,28 @@ func Run(ctx context.Context, configPath string, tunnelNames []string) (err erro
 		return nil
 	}
 	return err
+}
+
+// startHealth creates the health recorder and starts publishing it, returning
+// a function that stops the publisher and writes one final snapshot.
+func startHealth(cfg *config.Config, selected []config.Tunnel) (*health.Recorder, func(), error) {
+	path, err := config.ExpandPath(cfg.StatePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving statePath %s: %w", cfg.StatePath, err)
+	}
+	names := make([]string, 0, len(selected))
+	for _, t := range selected {
+		names = append(names, t.Name)
+	}
+
+	rec := health.New(path, names)
+	// Write once immediately, so `status` can tell "the daemon is up and
+	// nothing has used these tunnels yet" from "no daemon has ever run".
+	if err := rec.Seed(); err != nil {
+		return nil, nil, err
+	}
+
+	done := make(chan struct{})
+	go rec.Publish(done)
+	return rec, func() { close(done) }, nil
 }
