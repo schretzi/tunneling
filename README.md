@@ -319,6 +319,55 @@ make pipeline  # everything above — run this before pushing
 `PLAN.md` holds the plan for whatever is currently being implemented;
 `BACKLOG.md` holds everything not yet being worked on.
 
+### Test coverage
+
+`make test` reports per-package coverage; overall it sits around 59%. The
+split matters more than the total:
+
+| package | | |
+| --- | --- | --- |
+| `internal/config` | ~91% | parsing, validation, the legacy file shape |
+| `internal/health` | ~79% | outcome classification, atomic publish, liveness |
+| `internal/service` | ~77% | plist rendering, launchd verbs, the command tree |
+| `cmd` | ~74% | the status state machine, `--json`, config commands |
+| `internal/logfile` | ~88% | rotation-aware reopening |
+| `internal/tunnel` | ~30% | host-key policy and classification covered; I/O not |
+| `internal/daemon` | 0% | signal handling and wiring |
+
+The high numbers are where a mistake is **silent**: a config that validates
+but means something else, a tunnel classified healthy when it is dead, a host
+key accepted that should not be. Those are worth pinning down, and two of them
+caught real bugs while being written — an unrecognized `hostKeyChecking` mode
+falling through to the permissive branch, and concurrent tunnels recording the
+same host key twice.
+
+The low numbers are where the code's whole job is to talk to something outside
+the process:
+
+- **`internal/tunnel`** — `forwardIAP` and `forwardSSH` need a live IAP
+  endpoint and a real SSH server. What is testable without them, and is
+  tested, is the decision-making: which host keys to accept, and how to
+  classify a finished connection.
+- **`internal/daemon`** — `Run` is signal handling and process lifetime;
+  `setupLogging` and `startHealth` are thin wiring over packages that are
+  themselves tested.
+- **`runLaunchctl`** — the one function in `internal/service` that actually
+  execs. Covering it means either loading real launchd jobs from the test
+  suite, which mutates the machine running it, or another layer of
+  indirection that would itself be untested.
+
+Those paths are verified by running the thing instead: real SSH banners
+through IAP, real TLS through the chained tunnels, socket counts before and
+after, `service restart` in a loop. That has caught what unit tests did not —
+the connection leak, a multiplexed session reporting IDLE while busiest, a
+leftover temp file from an interrupted write — but it does not run in CI, so
+it is a complement to the numbers above rather than a substitute.
+
+`internal/service` was itself at 19% until recently, with every job-mutating
+method untested. That is exactly where a `bootout`/`bootstrap` race hid long
+enough to break `service install` intermittently in four repos. It is now at
+77%, with a scripted launchd behind `Service.run`.
+
 ### Git hooks
 
 [lefthook](https://github.com/evilmartians/lefthook) runs

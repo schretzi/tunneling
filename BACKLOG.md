@@ -28,6 +28,15 @@ worked on yet. The plan for whatever *is* being worked on lives in `PLAN.md`.
       OK. There is no staleness horizon, because there is no way to tell "not
       used" from "quietly broken" without generating traffic.
 
+## Testing
+
+- [ ] `internal/tunnel`'s forwarding paths (~30%) need a fake IAP endpoint and
+      a local SSH server to cover. Worth it if a bug ever lands there; the
+      decision logic around them is already covered.
+- [ ] `internal/daemon` is at 0%. `Run` is signal handling and process
+      lifetime, so covering it means driving a subprocess — a different kind
+      of test than the rest of the suite.
+
 ## Housekeeping
 
 - [ ] `internal/logfile`, `internal/service` and `internal/version` are

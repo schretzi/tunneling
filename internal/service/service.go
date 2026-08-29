@@ -11,6 +11,24 @@
 //	log     ~/Library/Logs/<name>.log       (written by the process itself)
 //	stderr  ~/Library/Logs/<name>.err.log   (launchd; panics only)
 //
+// # Testing
+//
+// Everything that talks to launchd goes through the Service.run field rather
+// than calling launchctl directly, so the tests drive Install/Start/Stop/
+// Restart/Status against a scripted launchd. That indirection exists for one
+// concrete reason: this package was at 19% coverage, with every job-mutating
+// method untested, and that is exactly where the bootout/bootstrap race hid
+// for as long as it did — `service install` failing intermittently with
+// "Bootstrap failed: 5: Input/output error", mostly on the runs that had just
+// changed the plist.
+//
+// runLaunchctl — the one function that actually execs launchctl — stays
+// untested on purpose. Covering it would mean either loading real launchd
+// jobs from the test suite (which mutates the machine running it) or wrapping
+// exec in another layer of indirection that itself would not be tested. The
+// argument construction and the output parsing around it are covered; the
+// exec call is three lines with nothing to get wrong that a fake would catch.
+//
 // This file is duplicated verbatim in KerberosKeepAlive, OauthMailToken,
 // macswitcher and tunneling. They are four separate modules with no shared
 // dependency; keep the copies in sync by hand.
@@ -117,6 +135,18 @@ type plistData struct {
 
 // Service describes one launchd job owned by this tool.
 type Service struct {
+	// run invokes launchctl. It is a field rather than a direct call so
+	// tests can drive Install/Stop/Start/Status against a scripted launchd
+	// instead of the real one — without it, everything that actually
+	// manipulates a job is untestable, which is precisely where the
+	// bootout/bootstrap race hid.
+	run func(args ...string) (string, error)
+	// bootoutTimeout and bootoutPollInterval bound the wait in Stop. Fields,
+	// not constants, so a test can shrink them; a test for "the job never
+	// unloads" would otherwise take the full timeout.
+	bootoutTimeout      time.Duration
+	bootoutPollInterval time.Duration
+
 	// name is the short job name: the binary name, lower-case. It drives the
 	// label, the plist filename and both log paths.
 	name string
@@ -138,7 +168,13 @@ type Service struct {
 // are built during init(). Set it from the PrepareFunc passed to NewCommand,
 // which runs inside RunE.
 func New(name string, args ...string) *Service {
-	return &Service{name: name, args: args}
+	return &Service{
+		name:                name,
+		args:                args,
+		run:                 runLaunchctl,
+		bootoutTimeout:      defaultBootoutTimeout,
+		bootoutPollInterval: defaultBootoutPollInterval,
+	}
 }
 
 // WithArgs replaces the ProgramArguments that follow the binary.
@@ -244,8 +280,8 @@ func (s *Service) serviceTarget() string { return guiDomain() + "/" + s.Label() 
 // provisioning run is much harder to diagnose than a timeout.
 const launchctlTimeout = 10 * time.Second
 
-// launchctl runs launchctl and returns its combined output.
-func launchctl(args ...string) (string, error) {
+// runLaunchctl runs launchctl and returns its combined output.
+func runLaunchctl(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), launchctlTimeout)
 	defer cancel()
 
@@ -360,17 +396,16 @@ func (s *Service) Start() error {
 		}
 		return err
 	}
-	if out, err := launchctl("bootstrap", guiDomain(), plistPath); err != nil {
+	if out, err := s.run("bootstrap", guiDomain(), plistPath); err != nil {
 		return fmt.Errorf("launchctl bootstrap %s: %w: %s", s.Label(), err, out)
 	}
 	return nil
 }
 
-// bootoutTimeout bounds how long Stop waits for launchd to finish tearing a
-// job down, and bootoutPollInterval how often it looks.
+// Defaults for the Stop wait; see the Service fields of the same name.
 const (
-	bootoutTimeout      = 10 * time.Second
-	bootoutPollInterval = 100 * time.Millisecond
+	defaultBootoutTimeout      = 10 * time.Second
+	defaultBootoutPollInterval = 100 * time.Millisecond
 )
 
 // Stop unloads the job and waits for launchd to finish. Not being loaded is
@@ -379,7 +414,7 @@ func (s *Service) Stop() error {
 	if !s.Loaded() {
 		return nil
 	}
-	out, err := launchctl("bootout", s.serviceTarget())
+	out, err := s.run("bootout", s.serviceTarget())
 
 	// The wait is the fix, not a nicety. bootout returns once the unload has
 	// been *requested*, not once launchd has finished it, so bootstrapping
@@ -398,13 +433,13 @@ func (s *Service) Stop() error {
 	if err != nil {
 		return fmt.Errorf("launchctl bootout %s: %w: %s", s.Label(), err, out)
 	}
-	return fmt.Errorf("launchctl bootout %s: still loaded after %s", s.Label(), bootoutTimeout)
+	return fmt.Errorf("launchctl bootout %s: still loaded after %s", s.Label(), s.bootoutTimeout)
 }
 
 // waitUnloaded polls until launchd no longer has the job registered, and
 // reports whether it went away within bootoutTimeout.
 func (s *Service) waitUnloaded() bool {
-	deadline := time.Now().Add(bootoutTimeout)
+	deadline := time.Now().Add(s.bootoutTimeout)
 	for {
 		if !s.Loaded() {
 			return true
@@ -412,7 +447,7 @@ func (s *Service) waitUnloaded() bool {
 		if time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(bootoutPollInterval)
+		time.Sleep(s.bootoutPollInterval)
 	}
 }
 
@@ -426,7 +461,7 @@ func (s *Service) Restart() error {
 
 // Loaded reports whether launchd currently has the job registered.
 func (s *Service) Loaded() bool {
-	_, err := launchctl("print", s.serviceTarget())
+	_, err := s.run("print", s.serviceTarget())
 	return err == nil
 }
 
@@ -470,7 +505,7 @@ func (s *Service) Status() (Status, error) {
 	// loaded, not an error to report: Loaded/Running stay false and that is
 	// exactly what the caller asked. Returning printErr here would make
 	// `service status` exit non-zero for the most ordinary state there is.
-	out, printErr := launchctl("print", s.serviceTarget())
+	out, printErr := s.run("print", s.serviceTarget())
 	if printErr != nil {
 		return st, nil //nolint:nilerr // not loaded is a status, not a failure
 	}
