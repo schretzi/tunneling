@@ -338,35 +338,55 @@ func (s *Service) Render() ([]byte, error) {
 
 // Install writes the plist and loads it. It is idempotent: an already-loaded
 // job is unloaded first.
-func (s *Service) Install() error {
+// Install writes the plist and makes sure the job is loaded from it. It
+// reports whether anything actually changed, so callers - and the Ansible
+// roles behind them - can tell a real install from a no-op.
+func (s *Service) Install() (changed bool, err error) {
 	rendered, err := s.Render()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	logDir, err := LogDir()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(logDir, 0o750); err != nil {
-		return fmt.Errorf("creating log directory %s: %w", logDir, err)
+		return false, fmt.Errorf("creating log directory %s: %w", logDir, err)
 	}
 
 	plistPath, err := s.PlistPath()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o750); err != nil {
-		return fmt.Errorf("creating LaunchAgents directory: %w", err)
+		return false, fmt.Errorf("creating LaunchAgents directory: %w", err)
 	}
+	// Nothing to do if the plist on disk is already what we would write and
+	// the job is running. Reporting that is not cosmetic: a provisioning run
+	// calls this every time, and a tool that always claims to have changed
+	// something makes "a second run reports no changes" impossible to hold.
+	//
+	// Both halves matter. Same plist but not loaded means a machine that was
+	// rebooted out of a disabled state; loaded but a different plist means the
+	// job is running yesterday's configuration.
+	//
+	// #nosec G304 -- plistPath is PlistPath(), built from the fixed
+	// LaunchAgents directory and this service's own label; it is the same
+	// path WriteFile below writes to, and never comes from user input.
+	if existing, err := os.ReadFile(plistPath); err == nil &&
+		bytes.Equal(existing, rendered) && s.Loaded() {
+		return false, nil
+	}
+
 	if err := os.WriteFile(plistPath, rendered, 0o600); err != nil {
-		return fmt.Errorf("writing plist %s: %w", plistPath, err)
+		return false, fmt.Errorf("writing plist %s: %w", plistPath, err)
 	}
 
 	if err := s.Stop(); err != nil {
-		return err
+		return false, err
 	}
-	return s.Start()
+	return true, s.Start()
 }
 
 // Uninstall unloads the job and removes its plist. Logs are left alone.

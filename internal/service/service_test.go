@@ -329,7 +329,7 @@ func TestInstallUnloadsThenLoads(t *testing.T) {
 	fake := &fakeLaunchctl{loaded: true}
 	s, home := installedService(t, fake)
 
-	if err := s.Install(); err != nil {
+	if _, err := s.Install(); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestStartRefusesWithoutAPlist(t *testing.T) {
 func TestStartSurfacesBootstrapFailure(t *testing.T) {
 	fake := &fakeLaunchctl{failBootstrap: true}
 	s, _ := installedService(t, fake)
-	if err := s.Install(); err == nil {
+	if _, err := s.Install(); err == nil {
 		t.Fatal("Install succeeded although bootstrap failed")
 	} else if !strings.Contains(err.Error(), "Input/output error") {
 		t.Errorf("error = %v, want launchctl's message included", err)
@@ -390,7 +390,7 @@ func TestStartSurfacesBootstrapFailure(t *testing.T) {
 func TestUninstallRemovesThePlist(t *testing.T) {
 	fake := &fakeLaunchctl{loaded: true}
 	s, home := installedService(t, fake)
-	if err := s.Install(); err != nil {
+	if _, err := s.Install(); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -426,7 +426,7 @@ func TestStatusParsesLaunchctlPrint(t *testing.T) {
 `,
 	}
 	s, _ := installedService(t, fake)
-	if err := s.Install(); err != nil {
+	if _, err := s.Install(); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -482,7 +482,7 @@ func TestStatusReportsLastExitCode(t *testing.T) {
 func TestRestartStopsThenStarts(t *testing.T) {
 	fake := &fakeLaunchctl{loaded: true}
 	s, _ := installedService(t, fake)
-	if err := s.Install(); err != nil {
+	if _, err := s.Install(); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	fake.calls = nil
@@ -558,7 +558,7 @@ func TestCommandTreeHasEveryVerb(t *testing.T) {
 func TestCommandStatusPrintsState(t *testing.T) {
 	fake := &fakeLaunchctl{loaded: true, printOutput: "\tstate = running\n\tpid = 7\n"}
 	s, _ := installedService(t, fake)
-	if err := s.Install(); err != nil {
+	if _, err := s.Install(); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -640,7 +640,7 @@ func TestCommandActionsReportPastTense(t *testing.T) {
 		t.Run(tc.verb, func(t *testing.T) {
 			fake := &fakeLaunchctl{loaded: true}
 			s, _ := installedService(t, fake)
-			if err := s.Install(); err != nil {
+			if _, err := s.Install(); err != nil {
 				t.Fatalf("Install: %v", err)
 			}
 
@@ -687,5 +687,51 @@ func TestCommandRejectsUnexpectedArguments(t *testing.T) {
 	s, _ := installedService(t, &fakeLaunchctl{})
 	if _, err := runCmd(t, s, nil, "status", "extra"); err == nil {
 		t.Error("`service status extra` was accepted, want an argument error")
+	}
+}
+
+// The rule this exists to keep: a second install changes nothing and says so.
+// The Ansible roles call `service install` on every run and key their
+// changed_when on the wording, so "installed and started" every time makes
+// "a second run reports no changes" impossible to hold.
+func TestInstallIsANoOpWhenNothingChanged(t *testing.T) {
+	// installedService uses t.Setenv, which rules out t.Parallel.
+	fake := &fakeLaunchctl{}
+	s, _ := installedService(t, fake)
+
+	changed, err := s.Install()
+	if err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+	if !changed {
+		t.Fatal("first Install reported no change")
+	}
+
+	changed, err = s.Install()
+	if err != nil {
+		t.Fatalf("second Install: %v", err)
+	}
+	if changed {
+		t.Fatal("second Install reported a change although the plist and the job are unchanged")
+	}
+}
+
+// Same plist, but the job is not loaded: that is a machine that came back from
+// a reboot with the agent disabled, and it has to be started.
+func TestInstallStartsAnUnloadedJobEvenWhenThePlistMatches(t *testing.T) {
+	// installedService uses t.Setenv, which rules out t.Parallel.
+	fake := &fakeLaunchctl{}
+	s, _ := installedService(t, fake)
+	if _, err := s.Install(); err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+
+	fake.loaded = false // rebooted, nothing running
+	changed, err := s.Install()
+	if err != nil {
+		t.Fatalf("second Install: %v", err)
+	}
+	if !changed {
+		t.Fatal("Install left an unloaded job alone although the plist was already correct")
 	}
 }

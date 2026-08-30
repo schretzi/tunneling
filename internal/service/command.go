@@ -89,14 +89,22 @@ how you apply a change to the plist.`,
 					return fmt.Errorf("not installing: %w", err)
 				}
 			}
-			if err := s.Install(); err != nil {
+			changed, err := s.Install()
+			if err != nil {
 				return err
 			}
 			plistPath, err := s.PlistPath()
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "installed and started %s\n  %s\n", s.Label(), plistPath)
+			// Two distinct messages on purpose: the Ansible roles that call
+			// this key their `changed_when` on the wording, so a re-run that
+			// altered nothing has to say so.
+			verb := "installed and started"
+			if !changed {
+				verb = "already installed and running"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n  %s\n", verb, s.Label(), plistPath)
 			return nil
 		},
 	}
