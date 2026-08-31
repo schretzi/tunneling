@@ -10,7 +10,7 @@ INSTALL_DIR ?= $(HOME)/bin
 
 # Keep these in sync with .github/workflows/ci.yml so "passes locally, fails
 # in CI" (and vice versa) cannot happen.
-GOLANGCI_VERSION ?= v2.13.1
+GOLANGCI_VERSION ?= v2.13.2
 GOSEC_VERSION    ?= v2.28.0
 
 help: ## Show this help.

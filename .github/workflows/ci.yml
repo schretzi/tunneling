@@ -16,7 +16,8 @@ permissions:
   contents: read
 
 env:
-  GOLANGCI_VERSION: v2.13.1
+  GOLANGCI_VERSION: v2.13.2
+  GOSEC_VERSION: v2.28.0
 
 jobs:
   build-and-test:
@@ -73,7 +74,7 @@ jobs:
       # gosec's own action is a Docker container action and does not run on
       # macOS runners, so install and run it directly.
       - name: install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+        run: go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
 
       - name: gosec
         run: gosec -quiet ./...
