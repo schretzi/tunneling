@@ -12,9 +12,9 @@
 // whether the file at its path is still the one it holds open, and reopens
 // when it is not.
 //
-// This file is duplicated verbatim in KerberosKeepAlive, OauthMailToken,
-// macswitcher and tunneling. They are four separate modules with no shared
-// dependency; keep the copies in sync by hand.
+// This file is duplicated verbatim in KerberosKeepAlive, LittleSnitchRules,
+// OauthMailToken, macswitcher and tunneling. They are five separate modules
+// with no shared dependency; keep the copies in sync by hand.
 package logfile
 
 import (

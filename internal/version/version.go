@@ -9,9 +9,9 @@
 //	  built:   <timestamp>
 //	  go:      go1.x darwin/arm64
 //
-// This file is duplicated verbatim in KerberosKeepAlive, OauthMailToken,
-// macswitcher and tunneling. They are four separate modules with no shared
-// dependency; keep the copies in sync by hand.
+// This file is duplicated verbatim in KerberosKeepAlive, LittleSnitchRules,
+// OauthMailToken, macswitcher and tunneling. They are five separate modules
+// with no shared dependency; keep the copies in sync by hand.
 package version
 
 import (

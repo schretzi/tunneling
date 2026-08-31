@@ -29,9 +29,9 @@
 // argument construction and the output parsing around it are covered; the
 // exec call is three lines with nothing to get wrong that a fake would catch.
 //
-// This file is duplicated verbatim in KerberosKeepAlive, OauthMailToken,
-// macswitcher and tunneling. They are four separate modules with no shared
-// dependency; keep the copies in sync by hand.
+// This file is duplicated verbatim in KerberosKeepAlive, LittleSnitchRules,
+// OauthMailToken, macswitcher and tunneling. They are five separate modules
+// with no shared dependency; keep the copies in sync by hand.
 package service
 
 import (
